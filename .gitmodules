@@ -1,0 +1,8 @@
+[submodule "deps/dpdk"]
+	path = deps/dpdk
+	url = https://github.com/emmericp/dpdk.git
+	ignore = untracked
+[submodule "deps/MoonState"]
+	path = deps/MoonState
+	url = https://github.com/dschoeffm/MoonState.git
+        ignore = untracked
