@@ -94,7 +94,6 @@ static uint16_t nb_rxd = RTE_TEST_RX_DESC_DEFAULT;
 static uint16_t nb_txd = RTE_TEST_TX_DESC_DEFAULT;
 
 /* mask of enabled ports */
-// static uint32_t l2fwd_enabled_port_mask = 0;
 static uint16_t portId;
 
 #define MAX_RX_QUEUE_PER_LCORE 16
@@ -108,15 +107,15 @@ struct lcore_queue_conf lcore_queue_conf[RTE_MAX_LCORE];
 // static struct rte_eth_dev_tx_buffer *tx_buffer[RTE_MAX_ETHPORTS];
 
 struct rte_eth_conf port_conf;
-struct rte_mempool *l2fwd_pktmbuf_pool = NULL;
+struct rte_mempool *pktmbuf_pool = NULL;
 
 /* Per-port statistics struct */
-struct l2fwd_port_statistics {
+struct port_statistics {
 	uint64_t tx;
 	uint64_t rx;
 	uint64_t dropped;
 } __rte_cache_aligned;
-struct l2fwd_port_statistics port_statistics;
+struct port_statistics port_statistics;
 
 #define MAX_TIMER_PERIOD 86400 /* 1 day max */
 /* A tsc-based timer responsible for triggering statistics printout */
@@ -157,7 +156,7 @@ static void print_stats(void) {
 	printf("\n====================================================\n");
 }
 
-static void l2fwd_mac_updating(struct rte_mbuf *m) {
+static void mac_update(struct rte_mbuf *m) {
 	struct ether_hdr *eth;
 
 	eth = rte_pktmbuf_mtod(m, struct ether_hdr *);
@@ -166,9 +165,9 @@ static void l2fwd_mac_updating(struct rte_mbuf *m) {
 	ether_addr_copy(&srcMac, &eth->s_addr);
 }
 
-static void l2fwd_simple_forward(struct rte_mbuf *m) {
+static void simple_forward(struct rte_mbuf *m) {
 
-	l2fwd_mac_updating(m);
+	mac_update(m);
 
 	/*
 		int sent = rte_eth_tx_burst(portId, 0, &m, 1);
@@ -178,7 +177,7 @@ static void l2fwd_simple_forward(struct rte_mbuf *m) {
 }
 
 /* main processing loop */
-static void l2fwd_main_loop(void) {
+static void main_loop(void) {
 	struct rte_mbuf *pkts_burst[MAX_PKT_BURST];
 	struct rte_mbuf *m;
 	unsigned lcore_id;
@@ -224,7 +223,7 @@ static void l2fwd_main_loop(void) {
 		for (unsigned int j = 0; j < nb_rx; j++) {
 			m = pkts_burst[j];
 			rte_prefetch0(rte_pktmbuf_mtod(m, void *));
-			l2fwd_simple_forward(m);
+			simple_forward(m);
 		}
 
 		if (nb_rx > 0) {
@@ -236,13 +235,13 @@ static void l2fwd_main_loop(void) {
 	}
 }
 
-static int l2fwd_launch_one_lcore(__attribute__((unused)) void *dummy) {
-	l2fwd_main_loop();
+static int launch_one_lcore(__attribute__((unused)) void *dummy) {
+	main_loop();
 	return 0;
 }
 
 /* display usage */
-static void l2fwd_usage(const char *prgname) {
+static void usage(const char *prgname) {
 	printf("%s [EAL options] -- -p PORTMASK [-q NQ]\n"
 		   "  -p portid\n"
 		   "  -T PERIOD: statistics will be refreshed each PERIOD seconds (0 to disable, 10 "
@@ -285,7 +284,7 @@ static const struct option lgopts[] = {
 	{CMD_LINE_OPT_NO_MAC_UPDATING, no_argument, &mac_updating, 0}, {NULL, 0, 0, 0}};
 
 /* Parse the argument given in the command line of the application */
-static int l2fwd_parse_args(int argc, char **argv) {
+static int parse_args(int argc, char **argv) {
 	int opt, ret;
 	char **argvopt;
 	int option_index;
@@ -310,7 +309,7 @@ static int l2fwd_parse_args(int argc, char **argv) {
 			break;
 
 		default:
-			l2fwd_usage(prgname);
+			usage(prgname);
 			return -1;
 		}
 	}
@@ -400,7 +399,7 @@ int main(int argc, char **argv) {
 	signal(SIGTERM, signal_handler);
 
 	/* parse application arguments (after the EAL ones) */
-	ret = l2fwd_parse_args(argc, argv);
+	ret = parse_args(argc, argv);
 	if (ret < 0)
 		rte_exit(EXIT_FAILURE, "Invalid L2FWD arguments\n");
 
@@ -418,9 +417,9 @@ int main(int argc, char **argv) {
 	timer_period *= rte_get_timer_hz();
 
 	/* create the mbuf pool */
-	l2fwd_pktmbuf_pool = rte_pktmbuf_pool_create("mbuf_pool", NB_MBUF, MEMPOOL_CACHE_SIZE, 0,
+	pktmbuf_pool = rte_pktmbuf_pool_create("mbuf_pool", NB_MBUF, MEMPOOL_CACHE_SIZE, 0,
 		RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
-	if (l2fwd_pktmbuf_pool == NULL)
+	if (pktmbuf_pool == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot init mbuf pool\n");
 
 	nb_ports = rte_eth_dev_count();
@@ -445,7 +444,7 @@ int main(int argc, char **argv) {
 	/* init one RX queue */
 	fflush(stdout);
 	ret = rte_eth_rx_queue_setup(
-		portId, 0, nb_rxd, rte_eth_dev_socket_id(portId), NULL, l2fwd_pktmbuf_pool);
+		portId, 0, nb_rxd, rte_eth_dev_socket_id(portId), NULL, pktmbuf_pool);
 	if (ret < 0)
 		rte_exit(
 			EXIT_FAILURE, "rte_eth_rx_queue_setup:err=%d, port=%u\n", ret, (unsigned)portId);
@@ -498,7 +497,7 @@ int main(int argc, char **argv) {
 	ret = 0;
 
 	/* launch per-lcore init on every lcore */
-	rte_eal_remote_launch(l2fwd_launch_one_lcore, NULL, 1);
+	rte_eal_remote_launch(launch_one_lcore, NULL, 1);
 	RTE_LCORE_FOREACH_SLAVE(lcore_id) {
 		if (rte_eal_wait_lcore(lcore_id) < 0) {
 			ret = -1;
