@@ -72,6 +72,14 @@
 
 #include <string>
 
+#include "IPv4_5TupleL2Ident.hpp"
+#include "astraeusClient.hpp"
+#include "cryptoProto.hpp"
+#include "mbuf.hpp"
+#include "stateMachine.hpp"
+
+using SM = StateMachine<IPv4_5TupleL2Ident<mbuf>, mbuf>;
+
 static volatile bool force_quit;
 
 /* MAC updating enabled by default */
@@ -124,6 +132,9 @@ static uint64_t timer_period = 1; /* default period is 1 second */
 static struct ether_addr srcMac;
 static struct ether_addr dstMac;
 
+static uint32_t dstIP = 0xc0a80002;
+static uint32_t srcIP = 0xc0a80003;
+
 /* Print out statistics on packets dropped */
 static void print_stats(void) {
 	uint64_t total_packets_dropped, total_packets_tx, total_packets_rx;
@@ -131,6 +142,8 @@ static void print_stats(void) {
 	total_packets_dropped = 0;
 	total_packets_tx = 0;
 	total_packets_rx = 0;
+
+	static int calledTimes = 1;
 
 	// const char clr[] = {27, '[', '2', 'J', '\0'};
 	// const char topLeft[] = {27, '[', '1', ';', '1', 'H', '\0'};
@@ -150,9 +163,10 @@ static void print_stats(void) {
 	total_packets_rx += port_statistics.rx;
 
 	printf("\nAggregate statistics ==============================="
-		   "\nTotal packets sent: %18" PRIu64 "\nTotal packets received: %14" PRIu64
-		   "\nTotal packets dropped: %15" PRIu64,
-		total_packets_tx, total_packets_rx, total_packets_dropped);
+		   "\nTotal packets sent: %18" PRIu64 "\nMillion packets sent per second: %18" PRIu64
+		   "\nTotal packets received: %14" PRIu64 "\nTotal packets dropped: %15" PRIu64,
+		total_packets_tx, ((total_packets_tx / 1000000) / (calledTimes++)), total_packets_rx,
+		total_packets_dropped);
 	printf("\n====================================================\n");
 }
 
@@ -235,8 +249,106 @@ static void main_loop(void) {
 	}
 }
 
+static AstraeusProto::identityHandle ident;
+
+static void prepareAstraeusInit(struct rte_mbuf *pkt, uint32_t srcIP, uint32_t dstIP,
+	uint16_t srcPort, uint16_t dstPort /*, SM &sm*/) {
+
+	IPv4_5TupleL2Ident<mbuf>::ConnectionID cID;
+	cID.dstIP = htonl(srcIP);
+	cID.srcIP = htonl(dstIP);
+	cID.dstPort = htons(srcPort);
+	cID.srcPort = htons(dstPort);
+	cID.proto = Headers::IPv4::PROTO_UDP;
+
+	auto state = Astraeus_Client::createStateData(&ident, srcIP, dstIP, srcPort, dstPort);
+	Astraeus_Client::initHandshakeNoTransition(state, static_cast<mbuf *>(pkt));
+	state.state = Astraeus_Client::States::HANDSHAKE;
+
+	// sm.addStateNoFun(cID, state);
+}
+
+static void main_loop_astraeus(void) {
+	struct rte_mbuf *pkts_burst[64];
+	unsigned int burstSize = 64;
+	struct rte_mbuf *m;
+	unsigned lcore_id;
+	// unsigned nb_rx;
+	uint64_t prev_tsc, diff_tsc, cur_tsc, timer_tsc;
+
+	// SM sm;
+	// Astraeus_Client::configStateMachine(sm, nullptr);
+
+	AstraeusProto::generateIdentity(ident);
+
+	prev_tsc = 0;
+	timer_tsc = 0;
+
+	lcore_id = rte_lcore_id();
+
+	RTE_LOG(INFO, L2FWD, "entering main loop on lcore %u\n", lcore_id);
+
+	while (!force_quit) {
+		cur_tsc = rte_rdtsc();
+		diff_tsc = cur_tsc - prev_tsc;
+
+		/* if timer is enabled */
+		if (timer_period > 0) {
+
+			/* advance the timer */
+			timer_tsc += diff_tsc;
+
+			/* if timer has reached its timeout */
+			if (unlikely(timer_tsc >= timer_period)) {
+
+				/* do this only on master core */
+				// only one core...
+				// if (lcore_id == rte_get_master_lcore()) {
+				print_stats();
+				/* reset the timer */
+				timer_tsc = 0;
+				//}
+			}
+		}
+
+		prev_tsc = cur_tsc;
+
+		// nb_rx = rte_eth_rx_burst((uint8_t)portId, 0, pkts_burst, MAX_PKT_BURST);
+		// port_statistics.rx += nb_rx;
+
+		int ret = rte_pktmbuf_alloc_bulk(pktmbuf_pool, pkts_burst, burstSize);
+		if (ret != 0) {
+			rte_exit(EXIT_FAILURE, "rte_pktmbuf_alloc_bulk() failed");
+		}
+
+		for (unsigned int j = 0; j < burstSize; j++) {
+			m = pkts_burst[j];
+			rte_prefetch0(rte_pktmbuf_mtod(m, void *));
+			// simple_forward(m);
+
+			prepareAstraeusInit((pkts_burst[j]), srcIP, dstIP, 1025 + j, 4433 /*, sm*/);
+
+			struct ether_hdr *eth = rte_pktmbuf_mtod(m, struct ether_hdr *);
+			ether_addr_copy(&srcMac, &eth->s_addr);
+			ether_addr_copy(&dstMac, &eth->d_addr);
+			eth->ether_type = htons(0x0800);
+		}
+		srcIP++;
+
+		// if (nb_rx > 0) {
+		int sent = rte_eth_tx_burst(portId, 0, pkts_burst, burstSize);
+		if (sent != static_cast<int>(burstSize)) {
+			rte_exit(EXIT_FAILURE, "sent != burstSize");
+		}
+		if (sent) {
+			port_statistics.tx += sent;
+		}
+		//}
+	}
+}
+
 static int launch_one_lcore(__attribute__((unused)) void *dummy) {
-	main_loop();
+	main_loop_astraeus();
 	return 0;
 }
 
