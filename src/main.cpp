@@ -144,6 +144,10 @@ static void print_stats(void) {
 	total_packets_rx = 0;
 
 	static int calledTimes = 1;
+	static float mpps = 0.0;
+
+	mpps += ((total_packets_tx / 1000000) / (calledTimes++));
+	mpps /= 2;
 
 	// const char clr[] = {27, '[', '2', 'J', '\0'};
 	// const char topLeft[] = {27, '[', '1', ';', '1', 'H', '\0'};
@@ -163,10 +167,9 @@ static void print_stats(void) {
 	total_packets_rx += port_statistics.rx;
 
 	printf("\nAggregate statistics ==============================="
-		   "\nTotal packets sent: %18" PRIu64 "\nMillion packets sent per second: %18" PRIu64
+		   "\nTotal packets sent: %18" PRIu64 "\nMillion packets sent per second: %.2f"
 		   "\nTotal packets received: %14" PRIu64 "\nTotal packets dropped: %15" PRIu64,
-		total_packets_tx, ((total_packets_tx / 1000000) / (calledTimes++)), total_packets_rx,
-		total_packets_dropped);
+		total_packets_tx, mpps, total_packets_rx, total_packets_dropped);
 	printf("\n====================================================\n");
 }
 
