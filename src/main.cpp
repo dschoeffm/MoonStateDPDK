@@ -252,7 +252,7 @@ static void main_loop(void) {
 static AstraeusProto::identityHandle ident;
 
 static void prepareAstraeusInit(struct rte_mbuf *pkt, uint32_t srcIP, uint32_t dstIP,
-	uint16_t srcPort, uint16_t dstPort /*, SM &sm*/) {
+	uint16_t srcPort, uint16_t dstPort, SM &sm) {
 
 	IPv4_5TupleL2Ident<mbuf>::ConnectionID cID;
 	cID.dstIP = htonl(srcIP);
@@ -265,7 +265,7 @@ static void prepareAstraeusInit(struct rte_mbuf *pkt, uint32_t srcIP, uint32_t d
 	Astraeus_Client::initHandshakeNoTransition(state, static_cast<mbuf *>(pkt));
 	state.state = Astraeus_Client::States::HANDSHAKE;
 
-	// sm.addStateNoFun(cID, state);
+	sm.addStateNoFun(cID, state);
 }
 
 static void main_loop_astraeus(void) {
@@ -276,8 +276,8 @@ static void main_loop_astraeus(void) {
 	// unsigned nb_rx;
 	uint64_t prev_tsc, diff_tsc, cur_tsc, timer_tsc;
 
-	// SM sm;
-	// Astraeus_Client::configStateMachine(sm, nullptr);
+	SM sm;
+	Astraeus_Client::configStateMachine(sm, nullptr);
 
 	AstraeusProto::generateIdentity(ident);
 
@@ -326,7 +326,7 @@ static void main_loop_astraeus(void) {
 			rte_prefetch0(rte_pktmbuf_mtod(m, void *));
 			// simple_forward(m);
 
-			prepareAstraeusInit((pkts_burst[j]), srcIP, dstIP, 1025 + j, 4433 /*, sm*/);
+			prepareAstraeusInit((pkts_burst[j]), srcIP, dstIP, 1025 + j, 4433, sm);
 
 			struct ether_hdr *eth = rte_pktmbuf_mtod(m, struct ether_hdr *);
 			ether_addr_copy(&srcMac, &eth->s_addr);
